@@ -121,8 +121,13 @@ public class NearRealTimeIndexer implements Indexer {
 
     @Override
     public void upsert(Iterable<Field> doc, Term idTerm) {
-        if (logger.isDebugEnabled())
-            logger.debug(indexName + " Indexing fields" + doc);
+        if (logger.isDebugEnabled()) {
+        	try {
+        		logger.debug(indexName + " Indexing fields" + doc);
+        	} catch( Exception e ) {
+        		logger.error(e.toString(),e);
+        	}
+        }
 
         try {
             latest = indexWriter.updateDocument(idTerm, doc);
@@ -134,8 +139,13 @@ public class NearRealTimeIndexer implements Indexer {
 
     @Override
     public void insert(Iterable<Field> doc) {
-        if (logger.isDebugEnabled())
-            logger.debug(indexName + " Indexing fields" + doc);
+    	 if (logger.isDebugEnabled()) {
+         	try {
+         		logger.debug(indexName + " Indexing fields" + doc);
+         	} catch( Exception e ) {
+         		logger.error(e.toString(),e);
+         	}
+         }
 
         try {
             latest = indexWriter.addDocument(doc);

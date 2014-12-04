@@ -55,7 +55,8 @@ public class StreamingJsonDocument extends JsonDocument {
                 String currentFieldName = Joiner.on('.').join(fieldName);
                 switch (current) {
                     case START_OBJECT:
-                        pushLevelFieldName(fieldName, levelFieldName);
+                    	if( last != JsonToken.FIELD_NAME )
+                    		pushLevelFieldName(fieldName, levelFieldName);
                         break;
 
                     case END_OBJECT:
@@ -77,6 +78,7 @@ public class StreamingJsonDocument extends JsonDocument {
 
                     case FIELD_NAME:
                         levelFieldName = jp.getText();
+                        if( levelFieldName != null ) levelFieldName = levelFieldName.toLowerCase();
                         fieldName.add(levelFieldName);
                         break;
 

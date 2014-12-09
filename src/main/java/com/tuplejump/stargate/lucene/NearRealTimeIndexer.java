@@ -87,6 +87,7 @@ public class NearRealTimeIndexer implements Indexer {
         indexSearcherReferenceManager = new SearcherManager(delegate, true, null);
         reopenThread = new ControlledRealTimeReopenThread<>(indexWriter, indexSearcherReferenceManager, 1, 0.01);
         startReopenThread();
+        indexSearcherReferenceManager.maybeRefresh();
     }
 
 
@@ -143,7 +144,7 @@ public class NearRealTimeIndexer implements Indexer {
          	try {
          		logger.debug(indexName + " Indexing fields" + doc);
          	} catch( Exception e ) {
-         		logger.error(e.toString(),e);
+         		//logger.error(e.toString(),e);
          	}
          }
 

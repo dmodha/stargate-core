@@ -22,6 +22,7 @@ import com.tuplejump.stargate.lucene.Indexer;
 import com.tuplejump.stargate.lucene.NearRealTimeIndexer;
 import com.tuplejump.stargate.lucene.Options;
 import com.tuplejump.stargate.lucene.SearcherCallback;
+
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.cql3.CFDefinition;
 import org.apache.cassandra.db.ColumnFamily;
@@ -36,7 +37,13 @@ import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.gms.ApplicationState;
+import org.apache.cassandra.gms.EndpointState;
+import org.apache.cassandra.gms.Gossiper;
+import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
+import org.apache.cassandra.gms.VersionedValue;
 import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.utils.FBUtilities;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.MultiReader;
 import org.apache.lucene.index.Term;
@@ -45,8 +52,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.locks.Lock;
@@ -73,6 +82,16 @@ public class RowIndex extends PerRowSecondaryIndex {
     private final Lock readLock = indexLock.readLock();
     private final Lock writeLock = indexLock.writeLock();
     static ExecutorService executorService = Executors.newFixedThreadPool(10);
+    static class RowkeyColumnFamiy {
+    	ByteBuffer rowKey;
+		ColumnFamily cf;
+
+		public RowkeyColumnFamiy(ByteBuffer rowKey, ColumnFamily cf){
+    		this.rowKey = rowKey.duplicate();
+    		this.cf = cf;
+    	}
+    };
+    private Queue<RowkeyColumnFamiy> toBeAdded=new ConcurrentLinkedQueue<>();
 
     public RowIndexSupport getRowIndexSupport() {
         return rowIndexSupport;
@@ -88,6 +107,10 @@ public class RowIndex extends PerRowSecondaryIndex {
 
     @Override
     public void index(ByteBuffer rowKey, ColumnFamily cf) {
+    	if (!StorageService.instance.isInitialized()) {
+    		toBeAdded.add(new RowkeyColumnFamiy(rowKey,cf));
+    		return;
+    	}
         readLock.lock();
         try {
             rowIndexSupport.indexRow(indexer(baseCfs.partitioner.decorateKey(rowKey)), rowKey, cf);
@@ -211,11 +234,12 @@ public class RowIndex extends PerRowSecondaryIndex {
 
             logger.warn("Creating new NRT Indexer for {}", indexName);
             indexers = new HashMap<>();
-            Collection<Range<Token>> ranges = StorageService.instance.getLocalRanges(keyspace);
-            //Collection<Range<Token>> ranges = Collections.singletonList(new Range<Token>(Murmur3Partitioner.MINIMUM.getToken(), Murmur3Partitioner.MINIMUM.getToken()));
-            for (Range<Token> range : ranges) {
-                Indexer indexer = new NearRealTimeIndexer(this.options.analyzer, keyspace, baseCfs.name, indexName, range.left.toString());
-                indexers.put(range, indexer);
+            if (StorageService.instance.isInitialized()) {
+                updateIndexers();
+            } else {
+                //this is booting. lets make indexers after booting is complete
+                RingChangeListener changeListener = new RingChangeListener();
+                Gossiper.instance.register(changeListener);
             }
             rowIndexSupport = new RowIndexSupport(options, baseCfs);
 
@@ -223,7 +247,39 @@ public class RowIndex extends PerRowSecondaryIndex {
             writeLock.unlock();
         }
     }
-
+    private void updateIndexers() {
+        writeLock.lock();
+        try {
+            Collection<Range<Token>> ranges = StorageService.instance.getLocalRanges(keyspace);
+            //Collection<Range<Token>> ranges = Collections.singletonList(new Range<Token>(Murmur3Partitioner.MINIMUM.getToken(), Murmur3Partitioner.MINIMUM.getToken()));
+            if (indexers.isEmpty()) {
+                logger.warn("Adding VNode indexers");
+                for (Range<Token> range : ranges) {
+                    Indexer indexer = new NearRealTimeIndexer(this.options.analyzer, keyspace, baseCfs.name, indexName, range.left.toString());
+                    indexers.put(range, indexer);
+                    logger.warn("Added VNode indexers for range {}", range);
+                }
+            } else {
+                logger.warn("Change in VNode indexers");
+                HashMap<Range<Token>, Indexer> indexersToRemove = new HashMap<>(indexers);
+                for (Range<Token> range : ranges) {
+                    indexersToRemove.remove(range);
+                }
+                for (Map.Entry<Range<Token>, Indexer> entry : indexersToRemove.entrySet()) {
+                    logger.warn("Removing indexer for range {}", entry.getKey());
+                    Indexer indexer = indexers.remove(entry.getKey());
+                    indexer.removeIndex();
+                    logger.warn("Removed indexer for range {}", entry.getKey());
+                }
+            }
+        } finally {
+            writeLock.unlock();
+        }
+        while(!this.toBeAdded.isEmpty()){
+        	RowkeyColumnFamiy rkc = this.toBeAdded.remove();
+        	this.index(rkc.rowKey, rkc.cf);
+        }
+    }
 
     @Override
     public void validateOptions() throws ConfigurationException {
@@ -337,7 +393,49 @@ public class RowIndex extends PerRowSecondaryIndex {
             readLock.unlock();
         }
     }
+    private class RingChangeListener implements IEndpointStateChangeSubscriber {
 
+        private void doOnChange() {
+            updateIndexers();
+        }
+
+
+        @Override
+        public void onJoin(InetAddress endpoint, EndpointState epState) {
+
+        }
+
+        @Override
+        public void beforeChange(InetAddress endpoint, EndpointState currentState, ApplicationState newStateKey, VersionedValue newValue) {
+
+        }
+
+        @Override
+        public void onChange(InetAddress endpoint, ApplicationState state, VersionedValue value) {
+            if (state == ApplicationState.TOKENS && FBUtilities.getBroadcastAddress().equals(endpoint))
+                doOnChange();
+        }
+
+        @Override
+        public void onAlive(InetAddress endpoint, EndpointState state) {
+
+        }
+
+        @Override
+        public void onDead(InetAddress endpoint, EndpointState state) {
+
+        }
+
+        @Override
+        public void onRemove(InetAddress endpoint) {
+
+        }
+
+        @Override
+        public void onRestart(InetAddress endpoint, EndpointState state) {
+
+        }
+    }
     @Override
     public String toString() {
         return "RowIndex [index=" + indexName + ", keyspace=" + keyspace + ", table=" + tableName + ", column=" + primaryColumnName + "]";

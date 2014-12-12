@@ -90,8 +90,11 @@ public class SearchSupport extends SecondaryIndexSearcher {
     public List<Row> search(ExtendedFilter mainFilter) {
 
         List<IndexExpression> clause = mainFilter.getClause();
-        if (logger.isDebugEnabled())
-            logger.debug("All IndexExprs {}", clause);
+        try {
+	        if (logger.isDebugEnabled())
+	            logger.debug("All IndexExprs {}", clause);
+        } catch( Exception ex ) {
+        }
         try {
             Search search = getQuery(matchThisIndex(clause));
             return getRows(mainFilter, search);

@@ -127,9 +127,12 @@ public class RowScanner extends ColumnFamilyStore.AbstractScanIterator {
             String thisColName = searchSupport.currentIndex.getRowIndexSupport().getActualColumnName(column.name());
             boolean isIndexColumn = indexColumnName.equals(thisColName);
             if (isIndexColumn) {
-                if (logger.isDebugEnabled())
-                    logger.debug("Primary col name {}", UTF8Type.instance.compose(column.name()));
-                Column scoreColumn = new Column(column.name(), UTF8Type.instance.decompose("{\"score\":" + score.toString() + "}"));
+            	try {
+	                if (logger.isDebugEnabled())
+	                    logger.debug("Primary col name {}", UTF8Type.instance.compose(column.name()));
+            	} catch(Exception ex) {
+            	}
+	            Column scoreColumn = new Column(column.name(), UTF8Type.instance.decompose("{\"score\":" + score.toString() + "}"));
                 cleanColumnFamily.addColumn(scoreColumn);
                 metaColReplaced = true;
             } else {

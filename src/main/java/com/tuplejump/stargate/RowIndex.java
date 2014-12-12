@@ -110,6 +110,9 @@ public class RowIndex extends PerRowSecondaryIndex {
         try {
             waitForIndexBuilt();
             return new SearchSupport(baseCfs.indexManager, this, columns, this.options);
+        } catch (Exception ex ) {
+        	logger.error(ex.getMessage());
+        	throw ex;
         } finally {
             readLock.unlock();
         }

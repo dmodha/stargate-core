@@ -94,8 +94,13 @@ public class BasicIndexer implements Indexer {
 
     @Override
     public void insert(Iterable<Field> doc) {
-        if (logger.isDebugEnabled())
-            logger.debug(indexName + " Indexing fields" + doc);
+        if (logger.isDebugEnabled()) {
+        	try {
+        		logger.debug(indexName + " Indexing fields" + doc);
+        	} catch( Exception ex ) {
+        		logger.debug(ex.getMessage());
+        	}
+        }
 
         try {
             indexWriter.addDocument(doc);
